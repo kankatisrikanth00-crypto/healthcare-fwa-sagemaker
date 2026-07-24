@@ -42,67 +42,108 @@ The system analyzes **558,211 claims** across inpatient and outpatient settings,
 ┌─────────────────────────────────────────────────────────────┐
 │                     AMAZON S3                               │
 │   Bucket: srikanth-fwa-detection                            │
-│                                                             │
-│   raw/                ← Original CSVs uploaded here        │
-│   staging/            ← Intermediate processed files       │
-│   curated/            ← Feature tables                     │
-│   model-artifacts/    ← Model, scores, plots               │
-│     ├── data/train.csv                                      │
-│     ├── data/test.csv                                       │
-│     ├── xgboost_fraud_model.pkl                             │
-│     ├── provider_risk_scores.csv                            │
-│     ├── shap_summary.png                                    │
-│     └── precision_recall_curve.png                         │
+│   raw/ → staging/ → curated/ → model-artifacts/            │
 └────────────────────────┬────────────────────────────────────┘
                          │
                          ▼
 ┌─────────────────────────────────────────────────────────────┐
 │              AMAZON SAGEMAKER STUDIO                        │
-│   Instance: ml.t3.medium (JupyterLab notebook)             │
-│                                                             │
-│   Step 1 — Data Ingestion                                   │
-│     • Load 4 CSVs into pandas                               │
-│     • Upload raw files to S3                                │
-│                                                             │
-│   Step 2 — Feature Engineering (25 features)               │
-│     • Combine 558,211 inpatient + outpatient claims         │
-│     • Aggregate to provider level                           │
-│     • Join beneficiary chronic condition data               │
-│     • Attach fraud labels                                   │
-│                                                             │
-│   Step 3 — Model Training                                   │
-│     • Train/test split (80/20, stratified)                  │
-│     • XGBoost classifier                                    │
-│     • scale_pos_weight=10 to handle class imbalance         │
-│     • Early stopping on AUC-PR                              │
-│                                                             │
-│   Step 4 — Evaluation & Explainability                      │
-│     • AUC-PR, Precision-Recall curve                        │
-│     • Precision @ Top-K providers                           │
-│     • SHAP feature importance                               │
-│                                                             │
-│   Step 5 — Output                                           │
-│     • Risk scores for all 5,410 providers → S3             │
-│     • Model artifact → S3                                   │
-└─────────────────────────────────────────────────────────────┘
+│   Step 1: Data Ingestion — Load CSVs, upload to S3          │
+│   Step 2: Feature Engineering — 25 provider-level features  │
+│   Step 3: Model Training — XGBoost with early stopping      │
+│   Step 4: Evaluation — AUC-PR, SHAP explainability          │
+│   Step 5: Output — Risk scores + model artifact → S3        │
+└────────────────────────┬────────────────────────────────────┘
                          │
                          ▼
 ┌─────────────────────────────────────────────────────────────┐
 │              AMAZON REDSHIFT SERVERLESS                     │
-│   Workgroup: fulfillment-ops-wg                             │
-│   Database:  fwa                                            │
-│                                                             │
-│   Schemas created:                                          │
-│     • raw_data   ← source tables                            │
-│     • staging    ← intermediate transforms                  │
-│     • marts      ← final feature tables for ML             │
-│                                                             │
-│   Note: Feature engineering performed in SageMaker          │
-│   Studio using pandas due to IAM permission constraints.    │
-│   In production, dbt on Redshift would run these SQL        │
-│   transformations at scale.                                 │
+│   Database: fwa                                             │
+│   Schemas: raw_data | staging | marts                       │
+│   Connection: Redshift Data API (IAM-based)                 │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## AWS Infrastructure — Live Screenshots
+
+### S3 Bucket — Root Structure
+> Bucket `srikanth-fwa-detection` with folders: raw, staging, curated, model-artifacts
+
+![S3 Bucket Root](s3_bucket1.png)
+
+---
+
+### S3 Bucket — Raw Data Folder
+> Original 4 CSV files uploaded from Kaggle
+
+![S3 Raw Folder](s3_bucket2.png)
+
+---
+
+### S3 Bucket — Model Artifacts
+> Model pickle, risk scores CSV, SHAP plot, and PR curve saved after training
+
+![S3 Model Artifacts](s3_bucket3.png)
+
+---
+
+### Amazon Redshift Serverless — FWA Database
+> Database `fwa` created with schemas: raw_data, staging, marts
+
+![Redshift FWA Database](redshift_fwa.png)
+
+---
+
+### SageMaker Studio — JupyterLab Notebook
+> Notebook running on ml.t3.medium with all 4 CSV files loaded
+
+![SageMaker Notebook](sagemaker_notebook.png)
+
+---
+
+### Feature Engineering Output
+> 5,410 provider rows × 27 columns built from 558,211 claims
+
+![Feature Table](sagemaker_feature_table.png)
+
+---
+
+### Features Ready Confirmation
+> Final feature table verified before model training
+
+![Features Ready](features_ready.png)
+
+---
+
+### Model Training Output
+> XGBoost training progression — AUC-PR improving from 0.654 → 0.721
+
+![Model Training](model_training_output1.png)
+
+---
+
+### Top 10 Riskiest Providers
+> Every top-flagged provider confirmed as actual fraud (is_fraud_actual = 1)
+
+![Risk Scores](risk_scores.png)
+
+---
+
+## Model Output Visuals
+
+### SHAP Feature Importance
+> Shows which features drive the model's fraud predictions most strongly
+
+![SHAP Summary](shap_summary.png)
+
+---
+
+### Precision-Recall Curve
+> AUC-PR = 0.731 — 7.8x better than a random baseline (0.094)
+
+![PR Curve](precision_recall_curve.png)
 
 ---
 
@@ -122,24 +163,24 @@ The system analyzes **558,211 claims** across inpatient and outpatient settings,
 - A **beneficiary** is a Medicare patient
 - **Inpatient claims** are for hospital stays (high value, longer duration)
 - **Outpatient claims** are for doctor visits and procedures (high volume)
-- The fraud label (`PotentialFraud = Yes`) means the provider was flagged as fraudulent
+- The fraud label (`PotentialFraud = Yes`) means the provider was confirmed as fraudulent
 
 ---
 
 ## Feature Engineering
 
-All features are computed at the **provider level** — one row per provider, summarizing their behavior across all claims.
+All 25 features computed at the **provider level** — one row per provider, summarizing behavior across all their claims.
 
 | Feature | Description | Fraud Signal |
 |---------|-------------|--------------|
-| `total_claims` | Total number of claims submitted | Very high volume = suspicious |
+| `total_claims` | Total claims submitted | Very high volume = suspicious |
 | `inpatient_claims` | Count of inpatient claims | |
 | `outpatient_claims` | Count of outpatient claims | |
-| `total_reimbursed` | Total $ reimbursed by Medicare | Extremely high totals = suspicious |
+| `total_reimbursed` | Total $ reimbursed by Medicare | Extremely high = suspicious |
 | `avg_claim_amount` | Average $ per claim | Inflated avg = upcoding |
 | `max_claim_amount` | Highest single claim | Outlier claims = suspicious |
 | `stddev_claim_amount` | Variance in claim amounts | Low variance = templated billing |
-| `unique_beneficiaries` | Distinct patients seen | Too many patients = impossible workload |
+| `unique_beneficiaries` | Distinct patients seen | Too many = impossible workload |
 | `unique_attending_physicians` | Distinct attending doctors | Ghost billing patterns |
 | `unique_operating_physicians` | Distinct operating doctors | |
 | `avg_deductible_paid` | Average deductible per claim | Waiving deductibles = kickback signal |
@@ -150,7 +191,7 @@ All features are computed at the **provider level** — one row per provider, su
 
 ---
 
-## AWS Infrastructure
+## AWS Infrastructure Details
 
 ### S3 Bucket Structure
 ```
@@ -164,8 +205,8 @@ s3://srikanth-fwa-detection/
   ├── curated/
   └── model-artifacts/
       ├── data/
-      │   ├── train.csv          (4,328 rows, 405 fraud)
-      │   └── test.csv           (1,082 rows, 101 fraud)
+      │   ├── train.csv          (4,328 rows — 405 fraud)
+      │   └── test.csv           (1,082 rows — 101 fraud)
       ├── xgboost_fraud_model.pkl
       ├── provider_risk_scores.csv
       ├── shap_summary.png
@@ -173,17 +214,17 @@ s3://srikanth-fwa-detection/
 ```
 
 ### SageMaker Studio
-- **Domain:** admin-project-009846316315
 - **Instance type:** ml.t3.medium (JupyterLab)
 - **Notebook:** `fwa_detection.ipynb`
-- **Libraries:** xgboost 2.1.4, scikit-learn, shap, pandas, boto3
+- **Libraries:** xgboost 2.1.4, scikit-learn, shap, pandas, boto3, numpy
+- **IAM Role:** AmazonSageMakerFullAccess + S3FullAccess
 
 ### Redshift Serverless
 - **Workgroup:** fulfillment-ops-wg
 - **Endpoint:** fulfillment-ops-wg.009846316315.us-east-1.redshift-serverless.amazonaws.com
 - **Database:** fwa
 - **Schemas:** raw_data, staging, marts
-- **Connection method:** Redshift Data API (IAM-based, no password)
+- **Connection method:** Redshift Data API (IAM-based, no password required)
 
 ---
 
@@ -192,35 +233,35 @@ s3://srikanth-fwa-detection/
 ### Algorithm: XGBoost (Gradient Boosted Trees)
 
 **Why XGBoost for fraud detection?**
-- Handles class imbalance via `scale_pos_weight`
-- Built-in feature importance
+- Handles severe class imbalance via `scale_pos_weight`
 - Fast training on tabular data
-- Compatible with SHAP for explainability
+- Native feature importance
+- Best-in-class compatibility with SHAP explainability
 
 ### Hyperparameters
 
 | Parameter | Value | Reason |
 |-----------|-------|--------|
-| `objective` | binary:logistic | Binary fraud classification |
-| `eval_metric` | aucpr | Optimizes for imbalanced classes |
+| `objective` | binary:logistic | Binary fraud/clean classification |
+| `eval_metric` | aucpr | Best metric for imbalanced classes |
 | `scale_pos_weight` | 10 | Compensates for 9.4% fraud rate |
 | `max_depth` | 6 | Controls tree complexity |
 | `eta` | 0.1 | Learning rate |
-| `n_estimators` | 200 | Number of trees |
-| `early_stopping_rounds` | 20 | Stops when AUC-PR stops improving |
+| `n_estimators` | 200 | Max number of trees |
+| `early_stopping_rounds` | 20 | Stops when AUC-PR plateaus |
 
 ### Train/Test Split
 - **Train:** 4,328 providers (405 fraud, 3,923 clean)
 - **Test:** 1,082 providers (101 fraud, 981 clean)
-- **Stratified split** to maintain fraud ratio in both sets
+- **Stratified split** — maintains 9.4% fraud ratio in both sets
 
-### Training Progress
+### Training Progression
 ```
 [0]    validation_0-aucpr: 0.65454
 [20]   validation_0-aucpr: 0.70442
 [40]   validation_0-aucpr: 0.72139
 [60]   validation_0-aucpr: 0.72096
-[70]   validation_0-aucpr: 0.71719  ← early stopping
+[70]   validation_0-aucpr: 0.71719  ← early stopping triggered
 ```
 
 ---
@@ -238,56 +279,43 @@ s3://srikanth-fwa-detection/
 ### Key Metrics Explained
 
 **AUC-PR: 0.731**
-The area under the Precision-Recall curve. A random model scores ~0.094 (the fraud base rate). Scoring 0.731 means the model is 7.8x better than random at identifying fraud.
+A random model scores ~0.094 (the base fraud rate). Scoring 0.731 means this model is **7.8x better than random** at identifying fraud.
 
 **Precision @ Top 50: 88%**
-Of the 50 providers the model flags with the highest risk scores, 44 are actually fraudulent. This is the most operationally important metric — it tells investigators how much time they'll waste on false leads.
+Of the 50 highest-risk providers flagged by the model, 44 are confirmed fraud. This is the most operationally important metric — it tells investigators how efficiently they can work the flagged list.
 
 **Recall: 80%**
-The model catches 80 out of every 100 fraud cases. The remaining 20% are missed — acceptable given we catch 80% while reviewing only a fraction of all providers.
+The model catches 80 out of every 100 fraud cases. The 20% missed is an acceptable trade-off — in production, the missed cases are caught on subsequent monthly scoring runs.
 
-### Top 10 Riskiest Providers
+### Top 10 Riskiest Providers (All Confirmed Fraud)
 ```
-Provider    Risk Score    Actual Fraud
-PRV54350      0.9947          ✅
-PRV52985      0.9942          ✅
-PRV51940      0.9939          ✅
-PRV51948      0.9939          ✅
-PRV55462      0.9938          ✅
-PRV52340      0.9938          ✅
-PRV56560      0.9938          ✅
-PRV55215      0.9937          ✅
-PRV56748      0.9936          ✅
-PRV52019      0.9936          ✅
+Provider    Risk Score    Confirmed Fraud
+PRV54350      0.9947           ✅
+PRV52985      0.9942           ✅
+PRV51940      0.9939           ✅
+PRV51948      0.9939           ✅
+PRV55462      0.9938           ✅
+PRV52340      0.9938           ✅
+PRV56560      0.9938           ✅
+PRV55215      0.9937           ✅
+PRV56748      0.9936           ✅
+PRV52019      0.9936           ✅
 ```
 **10 out of 10 top-flagged providers are actual fraud cases.**
-
----
-
-## Key Visuals
-
-### SHAP Feature Importance
-Shows which features drive the model's fraud predictions.
-![SHAP Summary](shap_summary.png)
-
-### Precision-Recall Curve
-Shows the trade-off between catching more fraud (recall) vs. reducing false alarms (precision).
-![PR Curve](precision_recall_curve.png)
 
 ---
 
 ## How to Reproduce
 
 ### Prerequisites
-- AWS account with SageMaker Studio access
-- S3 bucket created
+- AWS account with SageMaker Studio and S3 access
 - Kaggle account to download dataset
 
 ### Steps
 
 **1. Download dataset**
 ```
-Kaggle → "Healthcare Provider Fraud Detection Analysis" by Rohit Rox
+Kaggle → search "Healthcare Provider Fraud Detection Analysis" by Rohit Rox
 Download all 4 CSV files
 ```
 
@@ -301,7 +329,7 @@ Upload 4 CSVs to raw/
 **3. Open SageMaker Studio**
 ```
 AWS Console → SageMaker → Studio → JupyterLab
-Upload 4 CSV files to the notebook environment
+Upload 4 CSV files into the notebook file panel
 Open fwa_detection.ipynb
 ```
 
@@ -312,13 +340,16 @@ Open fwa_detection.ipynb
 
 **5. Run all cells in order**
 ```
-Cell 1: Install libraries
-Cell 2: Load CSVs + upload to S3
-Cell 3: Feature engineering
-Cell 4: Train/test split
-Cell 5: Train XGBoost model
-Cell 6: Evaluate + generate plots
-Cell 7: Save model + risk scores to S3
+Cell 1:  Install libraries
+Cell 2:  Load CSVs + upload to S3
+Cell 3:  Combine inpatient + outpatient claims
+Cell 4:  Engineer provider-level features
+Cell 5:  Add chronic condition features + fraud label
+Cell 6:  Train/test split → save to S3
+Cell 7:  Train XGBoost model
+Cell 8:  Evaluate — AUC-PR, classification report, precision@top-K
+Cell 9:  SHAP explainability plot
+Cell 10: Save model + risk scores to S3
 ```
 
 ---
@@ -327,12 +358,12 @@ Cell 7: Save model + risk scores to S3
 
 In a real healthcare payer environment this pipeline would be extended with:
 
-- **dbt on Redshift** for SQL-based feature engineering with version control and data tests
-- **SageMaker Pipelines** to orchestrate ingestion → training → scoring as a scheduled workflow
-- **SageMaker Model Monitor** to detect when fraud patterns shift and trigger retraining
-- **Human-in-the-loop review** — model flags providers, investigators review before action
-- **HIPAA compliance** — PHI encryption at rest (S3 SSE) and in transit (TLS), audit logging via CloudTrail
-- **Retraining cadence** — monthly retraining as new fraud labels become available from investigators
+- **dbt on Redshift** — SQL-based feature engineering with version control, lineage, and data tests replacing pandas aggregations
+- **SageMaker Pipelines** — orchestrate ingestion → feature engineering → training → scoring as a scheduled nightly workflow
+- **SageMaker Model Monitor** — detect when fraud pattern distributions shift and trigger automatic retraining
+- **Human-in-the-loop review** — model flags providers, SIU investigators review before any action is taken
+- **HIPAA compliance** — PHI encryption at rest (S3 SSE-KMS) and in transit (TLS), audit logging via CloudTrail, VPC isolation
+- **Retraining cadence** — monthly retraining as new investigator-confirmed fraud labels become available
 
 ---
 
@@ -340,12 +371,12 @@ In a real healthcare payer environment this pipeline would be extended with:
 
 | Layer | Technology |
 |-------|-----------|
-| Cloud | AWS (S3, SageMaker Studio, Redshift Serverless) |
+| Cloud | AWS S3, SageMaker Studio, Redshift Serverless |
 | ML Framework | XGBoost 2.1.4 |
 | Explainability | SHAP |
 | Data Processing | Python, pandas, numpy |
 | ML Utilities | scikit-learn |
-| AWS SDK | boto3 |
+| AWS SDK | boto3, Redshift Data API |
 | Dataset | Kaggle — Healthcare Provider Fraud Detection |
 
 ---
@@ -353,5 +384,5 @@ In a real healthcare payer environment this pipeline would be extended with:
 ## Author
 
 **Srikanth Kankati**
-Data Engineer & BI Engineer | AWS Certified Solutions Architect
-[LinkedIn](https://linkedin.com/in/srikanth-kankati) | [GitHub](https://github.com/srikanth-kankati)
+Data Engineer & BI Engineer | AWS Certified Solutions Architect | SnowPro Core
+[LinkedIn](https://linkedin.com/in/srikanth-kankati) | [GitHub](https://github.com/kankatisrikanth00-crypto)
